@@ -1,0 +1,1 @@
+"""SmartHire GenAI — FastAPI backend."""

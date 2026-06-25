@@ -1,0 +1,4 @@
+# Place your processed job dataset here
+# Expected columns (from your reference code):
+#   JobID, Title, ExperienceLevel, YearsOfExperience,
+#   Skills, Responsibilities, Keywords, search_text

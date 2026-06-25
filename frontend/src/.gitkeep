@@ -1,0 +1,6 @@
+src/
+  components/     # Shared UI (layout, cards, upload dropzone)
+  pages/          # Route pages
+  hooks/          # useAuth, useChat, etc.
+  lib/            # supabase client, api client
+  types/          # TypeScript interfaces matching backend schemas

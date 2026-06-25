@@ -1,0 +1,36 @@
+# Environment
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Data & indexes (large files — provide locally)
+data/indexes/*.index
+data/indexes/*.pkl
+data/raw/*.csv
+
+# Uploads
+backend/uploads/
+*.pdf
+!data/sample_resumes/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
