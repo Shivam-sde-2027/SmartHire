@@ -22,8 +22,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_jwt_secret: str = ""
-    # Use a separate field name to avoid Pydantic v2 property/field conflict
-    auth_enabled_override: bool | None = None
+    auth_enabled: bool = False
 
     database_url: str = ""
     cors_origins: str = "http://localhost:5173"
@@ -55,12 +54,6 @@ class Settings(BaseSettings):
     def upload_max_bytes(self) -> int:
         return self.upload_max_mb * 1024 * 1024
 
-    @property
-    def auth_enabled(self) -> bool:
-        # auth_enabled_override is set when AUTH_ENABLED_OVERRIDE env var is present
-        if self.auth_enabled_override is not None:
-            return self.auth_enabled_override
-        return bool(self.supabase_jwt_secret)
 
 
 @lru_cache
