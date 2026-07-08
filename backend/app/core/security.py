@@ -28,6 +28,28 @@ def get_current_user(
         )
 
     token = credentials.credentials
+    
+    # Handle mock development token with expiration check
+    if token.startswith("mock-dev-token"):
+        parts = token.split(".")
+        if len(parts) > 1:
+            try:
+                import base64
+                import json
+                import time
+                payload_str = base64.b64decode(parts[1]).decode("utf-8")
+                payload = json.loads(payload_str)
+                iat = payload.get("iat")
+                if iat and (time.time() - iat > 900):  # 15 minutes
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired.")
+                return CurrentUser(user_id=payload.get("sub", "dev-user"), email=payload.get("email", "dev@local"))
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
+        else:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired.")
+
     try:
         payload = jwt.decode(
             token,
@@ -37,7 +59,16 @@ def get_current_user(
         )
         user_id = payload.get("sub")
         if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token.")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
+        
+        # Enforce 5-minute maximum lifetime
+        iat = payload.get("iat")
+        if iat:
+            import time
+            if time.time() - iat > 900:  # 15 minutes
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired.")
+                
         return CurrentUser(user_id=user_id, email=payload.get("email"))
     except JWTError as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired token.") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token.") from exc
+

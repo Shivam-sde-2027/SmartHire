@@ -40,15 +40,15 @@ async def generate_suggestions(
     # Resolve job description
     target_job_desc = ""
     if body.job_id:
-        # Check cache in DB
+        # Check cache in DB (retrieve latest run first)
         cache_res = await db.execute(
             select(DBCVSuggestion).where(
                 DBCVSuggestion.resume_id == body.resume_id,
                 DBCVSuggestion.job_id == body.job_id,
                 DBCVSuggestion.user_id == user.user_id
-            )
+            ).order_by(DBCVSuggestion.created_at.desc()).limit(1)
         )
-        cached_suggestion = cache_res.scalar_one_or_none()
+        cached_suggestion = cache_res.scalars().first()
         if cached_suggestion:
             return {
                 "id": cached_suggestion.id,
@@ -65,6 +65,8 @@ async def generate_suggestions(
             target_job_desc = f"Title: {db_job.title}\nSkills: {db_job.skills}\nResponsibilities: {db_job.responsibilities}\nKeywords: {db_job.keywords}"
         else:
             # Fallback to FAISS metadata if DB row is not present
+            if not job_store.is_loaded:
+                raise HTTPException(status_code=503, detail="Job index not loaded.")
             metadata_job = job_store.get_by_id(body.job_id)
             if not metadata_job:
                 raise HTTPException(status_code=404, detail="Target job not found.")
@@ -75,6 +77,14 @@ async def generate_suggestions(
                 f"Keywords: {metadata_job.get('keywords', '')}"
             )
     elif body.job_description:
+        # Apply safety guardrails
+        from app.modules.guardrails.input_filter import is_query_safe_and_on_topic
+        is_safe, reason = is_query_safe_and_on_topic(body.job_description)
+        if not is_safe:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Safety check failed: The job description must be career/professional development related. {reason}"
+            )
         target_job_desc = body.job_description
     else:
         raise HTTPException(status_code=400, detail="Either job_id or job_description must be provided.")
