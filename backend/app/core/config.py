@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_jwt_secret: str = ""
-    auth_enabled: bool = False
+    auth_enabled: bool | None = None
 
     database_url: str = ""
     cors_origins: str = "http://localhost:5173"
@@ -56,6 +56,9 @@ class Settings(BaseSettings):
 
     @property
     def auth_enabled(self) -> bool:
+        val = self.__dict__.get("auth_enabled")
+        if val is not None:
+            return val
         return bool(self.supabase_jwt_secret)
 
 
