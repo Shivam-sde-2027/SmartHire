@@ -1,40 +1,12 @@
-# SmartHire GenAI — Architecture & Build Plan
+# SmartHire GenAI — System Architecture
 
-## 1. How Your Reference Code Maps to the App
-
-### Module 1 — Resume Parser (your code)
-
-| Your code | Production integration |
-|-----------|------------------------|
-| `extract_text_from_pdf` (PyMuPDF) | Extend with DOCX via `python-docx`; called from upload endpoint |
-| `parse_resume` + Pydantic `Resume` schema | Core service; schema becomes API response contract |
-| `run_sanity_check` | Post-parse validation layer before DB save |
-| Gemini structured JSON output | Keep; add retry on invalid JSON (max 2 retries) |
-
-**Fixes needed before integration:**
-- `Resume` model has indentation bug (`education`, `skills` etc. must be class fields)
-- `if __name__ == "main"` → `if __name__ == "__main__"`
-- Resume text builder uses `institution`/`title` but parser schema uses `institute`/`role` — unify field names
-- Add `target_role` field (required by project spec)
-
-### Module 2 — Job Search (your code)
-
-| Your code | Production integration |
-|-----------|------------------------|
-| `jobs_cleaned.csv` + `search_text` column | Loaded once; metadata in Postgres, vectors in FAISS |
-| `gemini-embedding-001` embeddings | Same model for resume + jobs (must match dimensions) |
-| `IndexFlatL2` FAISS | Keep for MVP; upgrade to `IndexIVFFlat` if dataset > 50k |
-| `job_metadata.pkl` | Replace with Postgres `jobs` table; FAISS index maps by row id |
-| Distance → score normalization | Keep; expose as `match_score` 0–100 |
-
-**Fixes needed:**
-- Remove hardcoded `GEMINI_API_KEY`; use env vars only
-- Pre-build index offline (`scripts/build_job_index.py`); API loads index at startup
-- Resume embedding: build text from parsed JSON using same field names as parser schema
+SmartHire GenAI is a modern, end-to-end career portal providing intelligent resume parsing, semantic job matching, AI-powered CV suggestions and a custom career mentoring chatbot utilizing Retrieval-Augmented Generation (RAG). The application is built using a React (Vite/TypeScript) frontend, a FastAPI (Python) backend, a Supabase (PostgreSQL + Auth) database and the Google Gemini API.
 
 ---
 
-## 2. System Architecture
+## 1. System Topology
+
+The overall system structure, request flows, and component dependencies are mapped as follows:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -66,160 +38,183 @@
 
 ---
 
-## 3. API Endpoints (FastAPI)
+## 2. Core Modules & Subsystems
 
-### Auth (delegated to Supabase; backend validates JWT)
-- Frontend uses `@supabase/supabase-js` for sign-up/login
-- Backend: `get_current_user()` via Supabase JWT secret
+The application consists of five key GenAI and utility modules:
 
-### Resume
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/resumes/upload` | Upload PDF/DOCX → parse → save profile |
-| GET | `/api/resumes/{id}` | Get parsed profile |
-| GET | `/api/resumes` | List user's resumes |
+### Module 1: Resume Parser
+- **Extraction Layer**: Extracts raw text from PDF and DOCX uploads using PyMuPDF (`fitz`) and `python-docx` tools.
+- **Parsing Service**: Translates raw unstructured text into a schema-validated structure using Google Gemini (`gemini-2.5-flash`).
+- **Validation**: Enforces fields using a structured Pydantic `Resume` schema. Performs post-parse data validation and unifies field names (e.g., matching education, skills, target role) before caching findings.
+- **Persistence**: Serializes the validated schema to JSON and persists it under the PostgreSQL `resumes` table.
 
-### Job Search
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/jobs/match` | Embed profile → FAISS top-N |
-| GET | `/api/jobs/{job_id}` | Job detail from Postgres |
-| GET | `/api/jobs` | Paginated browse + filters |
+### Module 2: Semantic Job Search & Matching
+- **Vector Embeddings**: Converts parsed user profiles and job descriptions into vector representations using the `gemini-embedding-001` model.
+- **FAISS Search**: Performs semantic matching utilizing a local FAISS index (`IndexFlatL2`). 
+- **Metadata Association**: Resolves index row identifiers back to metadata records stored in PostgreSQL.
+- **Normalizer**: Transforms L2 distances into a user-facing `match_score` normalized on a `0–100` scale.
 
-### CV Suggestions (Module 3)
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/suggestions/generate` | Resume + target job → suggestions JSON |
-| GET | `/api/suggestions/{id}` | Past suggestion run |
+### Module 3: CV Improvement Generator
+- **Context Injection**: Takes the parsed resume JSON model and maps it against a selected job profile (metadata or user-submitted job description).
+- **Advisory LLM**: Submits tailored prompts to Gemini to generate actionable improvements, outputting a structured JSON response.
+- **Response Format**: Generates fields covering missing skills, bullet-point revisions, ATS optimization advice, and an improved profile summary.
+- **Database Cache**: Stores recommendations within the `cv_suggestions` table keyed by resume and job identifiers, avoiding redundant LLM computations and API tokens.
 
-### Mentor (Module 4)
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/mentor/chat` | RAG chat (streaming SSE) |
-| GET | `/api/mentor/sessions` | List chat sessions |
-| GET | `/api/mentor/sessions/{id}/messages` | Session history |
+### Module 4: AI Career Mentor (RAG)
+- **Knowledge Base**: Curates markdown and text guides stored in the `data/career_notes/` directory.
+- **RAG Pipeline**: Implements a LangChain-based Retrieval-Augmented Generation pipeline. Vectorizes queries using `gemini-embedding-001`, searches the career notes index, and contextually prompts Gemini.
+- **Memory Manager**: Pulls session history from PostgreSQL and appends the last 10 dialog turns inside the active contextual prompt.
+- **SSE Streaming**: Pipes raw markdown content to the React frontend as a Server-Sent Events (SSE) stream, complete with source citations metadata.
 
-### Admin (optional MVP+)
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/admin/reindex-jobs` | Rebuild FAISS from dataset |
-| POST | `/api/admin/career-notes` | Upload career docs |
+### Module 5: Guardrails & Security
+- **Input Guard**: Lightweight keyword and classifier prompts assessing query safety and relevance before forwarding to the LLM (verifying queries are career/professional development related).
+- **Output Guard**: Grounds answers against retrieval source hits, forcing safe fallback statements ("I do not have enough information to answer that") when semantic confidence falls below set thresholds.
+- **Auth Filter**: Protects API router endpoints using JWT validation middleware powered by Supabase Auth credentials.
 
 ---
 
-## 4. Database Schema (PostgreSQL / Supabase)
+## 3. Database Schema
+
+The persistent database layer is designed as follows in PostgreSQL:
 
 ```sql
--- profiles (extends auth.users)
-profiles (id UUID PK → auth.users, full_name, created_at)
+-- Profiles: Extends the central auth.users table
+CREATE TABLE profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    full_name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
--- resumes
-resumes (id, user_id, file_path, raw_text_hash, parsed_json JSONB, created_at)
+-- Resumes: Stores parsed profile JSON and raw tracking details
+CREATE TABLE resumes (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    file_path VARCHAR(512),
+    raw_text_hash VARCHAR(64),
+    parsed_json JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
--- jobs (from your CSV)
-jobs (id, job_id, title, experience_level, years_of_experience,
-      skills, responsibilities, keywords, search_text, faiss_index INT)
+-- Jobs: Stores primary career dataset elements matching the FAISS index
+CREATE TABLE jobs (
+    id SERIAL PRIMARY KEY,
+    job_id VARCHAR(100) UNIQUE,
+    title VARCHAR(255),
+    experience_level VARCHAR(100),
+    years_of_experience VARCHAR(50),
+    skills TEXT,
+    responsibilities TEXT,
+    keywords TEXT,
+    search_text TEXT,
+    faiss_index INTEGER
+);
 
--- job_matches (search history)
-job_matches (id, user_id, resume_id, results JSONB, created_at)
+-- CV Suggestions: Caches LLM-generated resume tailoring feedback
+CREATE TABLE cv_suggestions (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    resume_id UUID NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+    job_id VARCHAR(100) REFERENCES jobs(job_id) ON DELETE SET NULL,
+    suggestions JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
--- cv_suggestions
-cv_suggestions (id, user_id, resume_id, job_id, suggestions JSONB, created_at)
+-- Chat Sessions: Logical groupings for AI Mentor dialogs
+CREATE TABLE chat_sessions (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    title VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
--- mentor
-chat_sessions (id, user_id, title, created_at)
-chat_messages (id, session_id, role, content, citations JSONB, created_at)
-
--- career_notes (for RAG)
-career_notes (id, title, content, source_path, chunk_index)
+-- Chat Messages: Persistent dialog elements with citation arrays
+CREATE TABLE chat_messages (
+    id UUID PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL, -- 'user' or 'assistant'
+    content TEXT NOT NULL,
+    citations JSONB, -- Array of source snippets/metadata
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-RLS: all tables scoped by `user_id = auth.uid()` except `jobs` and `career_notes` (read-only public).
+*Note: Row Level Security (RLS) policies are active on user tables (`resumes`, `cv_suggestions`, `chat_sessions`, `chat_messages`), restricting data access to `user_id = auth.uid()` only.*
 
 ---
 
-## 5. Remaining Modules — Implementation Plan
+## 4. API Reference
 
-### Module 3 — CV Improvement Generator
-- **Input:** parsed resume JSON + selected job (id or pasted description)
-- **Output:** `{ missing_skills, bullet_improvements[], summary_rewrite, ats_tips[] }`
-- **Prompt library:** `backend/app/prompts/cv_suggestions.py`
-- **Cache:** store in `cv_suggestions` table to avoid repeat LLM calls
+All backend services are exposed under the `/api` prefix on the FastAPI application:
 
-### Module 4 — AI Career Mentor (RAG)
-- **Corpus:** job descriptions (chunked) + `data/career_notes/` markdown guides
-- **Pipeline:** LangChain `RetrievalQA` or custom: embed query → FAISS (notes index) + optional job retriever → context → Gemini
-- **Citations:** return `source_id`, `snippet`, `title` per chunk
-- **Memory:** session messages in Postgres; last N turns in prompt
+### Resumes
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/resumes/upload` | Upload PDF/DOCX → Parse → Save JSON & Return |
+| `POST` | `/api/resumes/upload-and-match` | Upload PDF/DOCX → Parse → Compute FAISS Job Matches → Return |
+| `POST` | `/api/resumes/match` | Perform semantic job search on an existing parsed resume |
+| `GET`  | `/api/resumes` | Retrieve list of resumes uploaded by active user |
+| `GET`  | `/api/resumes/{resume_id}` | Fetch specific parsed resume profile by ID |
 
-### Module 5 — Guardrails
-- **Pre-LLM:** keyword + lightweight classifier prompt ("is this career-related?")
-- **Post-LLM:** check grounding — if no retrieval hits above threshold, force "I don't have enough information"
-- **Blocked topics:** regex + LLM safety filter before every mentor/suggestion call
-- **Applied at:** FastAPI middleware + per-module decorator
+### Jobs
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET`  | `/api/jobs` | Paginated listing of jobs, supporting query keyword and experience level filters |
+| `GET`  | `/api/jobs/{job_id}` | Retrieve specific job description metadata |
+| `POST` | `/api/jobs/match` | Perform FAISS similarity matching for target resume profiles |
+| `GET`  | `/api/jobs/health` | Verify if job vector index is properly loaded into memory |
 
-### Module 6 — React Frontend
-| Page | Features |
-|------|----------|
-| `/login`, `/signup` | Supabase Auth |
-| `/dashboard` | Recent resumes, quick actions |
-| `/resume/upload` | Drag-drop, parse progress, profile view |
-| `/jobs` | Match results, filters, job detail drawer |
-| `/suggestions` | Pick job → generate → display sections |
-| `/mentor` | Chat UI with citations, session sidebar |
+### CV Suggestions
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/suggestions/generate` | Generate (or retrieve cached) CV improvements for a resume and job |
+| `GET`  | `/api/suggestions/{suggestion_id}` | Fetch details of a specific generated suggestion |
+| `GET`  | `/api/suggestions` | List past recommendations generated by active user |
 
----
-
-## 6. Build Phases
-
-### Phase 1 — Foundation (Week 1)
-1. Folder structure + env setup
-2. FastAPI skeleton + Supabase JWT auth
-3. Integrate resume parser (Module 1) as API
-4. Import job CSV → Postgres + build FAISS script
-5. Job match API (Module 2)
-6. React auth + upload + profile + job results pages
-
-### Phase 2 — AI Features (Week 2)
-7. CV suggestion generator + API + UI
-8. Career notes ingestion + FAISS index
-9. RAG mentor pipeline + streaming chat API
-10. Chat UI with citations
-
-### Phase 3 — Polish & Deploy (Week 3)
-11. Guardrails on all LLM endpoints
-12. Evaluation script + report template
-13. Docker / Render / Railway backend deploy
-14. Vercel or Netlify frontend deploy
-15. README + demo video
+### AI Career Mentor
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/mentor/chat` | Send message query → returns SSE stream of RAG chat response |
+| `GET`  | `/api/mentor/sessions` | Retrieve list of chat sessions created by active user |
+| `GET`  | `/api/mentor/sessions/{session_id}/messages` | Retrieve conversation history details for a specific session |
 
 ---
 
-## 7. Data Folder (you provide)
+## 5. Storage & Layout
 
-Place your files here:
+The project data and workspace folders are structured as follows:
 
 ```
-data/
-├── raw/
-│   └── jobs_cleaned.csv      ← your processed dataset
-├── indexes/
-│   ├── job_faiss.index       ← built by scripts/build_job_index.py
-│   ├── job_metadata.pkl      ← optional; prefer Postgres
-│   └── career_notes_faiss.index
-├── career_notes/             ← markdown/PDF guides for mentor RAG
-└── sample_resumes/           ← test PDFs
+rp2/
+├── backend/                  # FastAPI Application Root
+│   ├── app/
+│   │   ├── api/              # Route controllers & API structure
+│   │   ├── core/             # Configuration, Database engine, Auth security
+│   │   ├── models/           # SQLAlchemy DB models
+│   │   ├── modules/          # Core modules (parser, search, suggestions, mentor, guardrails)
+│   │   ├── prompts/          # Standardized GenAI prompt templates
+│   │   └── schemas/          # Pydantic schemas / DTOs
+│   └── requirements.txt      # Backend Python dependencies
+├── frontend/                 # React Application Root (Vite + TS)
+│   ├── src/
+│   │   ├── components/       # Reusable layout and custom UI widgets
+│   │   ├── pages/            # View pages (Dashboard, Jobs, Suggestions, Mentor, Settings, Auth)
+│   │   └── App.tsx           # Router mount and app initialization
+├── data/                     # Vector stores & raw project assets
+│   ├── career_notes/         # Markdown documents for Mentor RAG injection
+│   ├── indexes/
+│   │   ├── job_faiss.index   # FAISS job index bin
+│   │   └── notes_faiss.index # FAISS career guides index bin
+│   └── raw/
+│       └── jobs_cleaned.csv  # Base dataset of jobs
+└── scripts/                  # Administrative scripts (index builders, evaluation tools)
 ```
 
 ---
 
-## 8. Evaluation Deliverables
+## 6. System Evaluation & Verification
 
-| Metric | How we measure |
-|--------|----------------|
-| Retrieval relevance | 10 sample profiles → manual yes/no on top-5 jobs |
-| Answer quality | 15 mentor questions → rubric (correctness, grounding, helpfulness) |
-| Prompt comparison | Before/after prompt in `docs/evaluation/prompt_comparison.md` |
-| Hallucination | Questions with no doc coverage → must refuse |
+To verify the quality and security of the generative search and mentoring modules, the system uses automated evaluation workflows:
+- **Retrieval Relevance**: Profiles are mapped against the FAISS store, and matches are graded on matching skills and experience levels.
+- **Answer Quality**: Mentor queries are tested against a predefined set of professional scenarios to check compliance with career advice guardrails.
+- **Grounding Compliance**: Evaluation tests verify that RAG questions with no corresponding source coverage are handled safely, with the model refusing to hallucinate answers.
 
-Script: `scripts/run_evaluation.py`
