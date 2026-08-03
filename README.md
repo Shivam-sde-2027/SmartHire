@@ -38,7 +38,7 @@ For detailed installation, configuration, and environment setup instructions, re
 2. **Run Backend Server**:
    ```powershell
    cd backend
-   .\.venv\Scripts\uvicorn app.main:app --reload --port 8000
+   ./.venv/Scripts/uvicorn app.main:app --reload --port 8000
    ```
 
 3. **Run Frontend App**:
@@ -51,16 +51,16 @@ For detailed installation, configuration, and environment setup instructions, re
 
 Copy `backend/.env.example` to `backend/.env` and fill in the required API keys (Gemini API keys, database connection strings, Supabase credentials, etc.) before starting.
 
-## Modules & Implementation Status
+## Project Modules
 
-| # | Module | Status | Reference Code Location |
-|---|--------|--------|-------------------------|
-| 1 | **Resume Parser** | Completed | [resume_parser](file:///d:/Project/rp2/backend/app/modules/resume_parser/) |
-| 2 | **Semantic Job Search** | Completed | [job_search](file:///d:/Project/rp2/backend/app/modules/job_search/) |
-| 3 | **CV Improvement Generator** | Completed | [cv_suggestions](file:///d:/Project/rp2/backend/app/modules/cv_suggestions/) |
-| 4 | **AI Career Mentor (RAG)** | Completed | [mentor](file:///d:/Project/rp2/backend/app/modules/mentor/) |
-| 5 | **Safety Guardrails** | Completed | [guardrails](file:///d:/Project/rp2/backend/app/modules/guardrails/) |
-| 6 | **React Portal UI & Deployment** | Completed | [frontend](file:///d:/Project/rp2/frontend/) |
+| # | Module | Reference Code Location |
+|---|--------|-------------------------|
+| 1 | **Resume Parser** | [resume_parser](file:///d:/Project/rp2/backend/app/modules/resume_parser/) |
+| 2 | **Semantic Job Search** | [job_search](file:///d:/Project/rp2/backend/app/modules/job_search/) |
+| 3 | **CV Improvement Generator** | [cv_suggestions](file:///d:/Project/rp2/backend/app/modules/cv_suggestions/) |
+| 4 | **AI Career Mentor (RAG)** | [mentor](file:///d:/Project/rp2/backend/app/modules/mentor/) |
+| 5 | **Safety Guardrails** | [guardrails](file:///d:/Project/rp2/backend/app/modules/guardrails/) |
+| 6 | **React Portal UI & Deployment** | [frontend](file:///d:/Project/rp2/frontend/) |
 
 ## Documentation
 
